@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime
 
-MONGO_URI = "mongodb+srv://aditi_chnr:mon50telmemo@aditi.dpig68j.mongodb.net/?retryWrites=true&w=majority"
+MONGO_URI = os.environ.get("MONGO_URI", "")
 DB_NAME = "smartstudy"
 FALLBACK_FILE = os.path.join(os.path.dirname(__file__), "fallback.json")
 
