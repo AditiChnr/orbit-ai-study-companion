@@ -38,32 +38,28 @@ ORBIT is an intelligent, fully passive study monitoring system powered by Comput
 ---
 
 ## Project Structure
-SmartStudy/
-├── backend/
-│   ├── app.py              # Main Flask server + all API routes
-│   ├── camera.py           # Camera feed, face detection, phone detection
-│   ├── session.py          # Study/sleep/away timers + Pomodoro logic
-│   ├── attendance.py       # Attendance tracking logic
-│   ├── db.py               # MongoDB Atlas + local JSON fallback
-│   ├── display.py          # TFT display (real on Pi, mock on laptop)
-│   ├── mock_gpio.py        # GPIO mock for laptop development
-│   ├── seed_data.py        # Seed 30 days of realistic demo data
-│   └── fallback.json       # Local database fallback
-├── frontend/
-│   └── src/
-│       ├── components/
-│       │   ├── Monitor.jsx       # Live camera + timers + mascot
-│       │   ├── Attendance.jsx    # Calendar + attendance stats
-│       │   ├── Graph.jsx         # Daily progress charts
-│       │   ├── AIAssistant.jsx   # Gemini powered chat
-│       │   ├── Reminders.jsx     # Reminders with notifications
-│       │   ├── SleepReminder.jsx # Sleep tracking + wake time
-│       │   └── Login.jsx         # Login page with ORBIT branding
-│       ├── App.jsx               # Tab navigation + auth
-│       └── index.css             # Global styles + dark theme
-├── start.bat               # One-click launcher for Windows
-└── README.md
 
+**Backend**
+- `app.py` — Main Flask server and all API routes
+- `camera.py` — Camera feed, face detection, phone detection
+- `session.py` — Study, sleep, away timers and Pomodoro logic
+- `attendance.py` — Attendance tracking logic
+- `db.py` — MongoDB Atlas with local JSON fallback
+- `display.py` — TFT display, real on Pi, mock on laptop
+- `mock_gpio.py` — GPIO mock for laptop development
+- `seed_data.py` — Seeds 30 days of realistic demo data
+- `fallback.json` — Local database fallback file
+
+**Frontend**
+- `Monitor.jsx` — Live camera feed, timers, mascot
+- `Attendance.jsx` — Calendar and attendance stats
+- `Graph.jsx` — Daily progress charts
+- `AIAssistant.jsx` — Gemini powered chat interface
+- `Reminders.jsx` — Reminders with browser notifications
+- `SleepReminder.jsx` — Sleep tracking and wake time
+- `Login.jsx` — Login page with ORBIT branding
+- `App.jsx` — Tab navigation and authentication
+- `index.css` — Global styles and dark theme
 ---
 
 ## Setup
@@ -168,17 +164,15 @@ py seed_data.py
 3. **Autosave loop** — Saves to MongoDB every 30 seconds
 
 ### Smart Pomodoro Flow
-Study for X minutes
-↓
-Popup: "Want 5 more minutes?"
-YES → Extend by 5 min
-NO  → Break timer starts
-↓
-Break ends → "Started studying?"
-YES → Resume study timer
-NO  → LOCK INNN popup
----
 
+1. Study for X minutes
+2. Popup appears — "Want 5 more minutes?"
+   - **YES** → Extend session by 5 minutes
+   - **NO** → Break timer starts
+3. Break ends — "Have you started studying?"
+   - **YES** → Resume study timer
+   - **NO** → LOCK INNN motivational popup appears
+   
 ## Laptop vs Raspberry Pi
 
 | Feature | Laptop | Raspberry Pi |
