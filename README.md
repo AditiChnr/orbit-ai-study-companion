@@ -268,4 +268,4 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-Made with by Aditi | ORBIT AI Study Companion <3
+Made by Aditi | ORBIT AI Study Companion <3
