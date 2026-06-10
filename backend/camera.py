@@ -33,8 +33,11 @@ def _load_yolo():
 
 _load_yolo()
 
+_cascade_path = (cv2.data.haarcascades 
+    if hasattr(cv2, "data") 
+    else "/usr/share/opencv4/haarcascades/")
 _face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    _cascade_path + "haarcascade_frontalface_default.xml"
 )
 
 # Shared state
