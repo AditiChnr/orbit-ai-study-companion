@@ -16,9 +16,21 @@ import display
 app = Flask(__name__, static_folder="dist", static_url_path="")
 CORS(app)
 
+# Initialise subsystems — each wrapped so one failure can't kill the server
 database.init_db()
-camera.start()
-display.start()
+
+try:
+    camera.start()
+    print("[App] Camera started OK")
+except Exception as _cam_err:
+    print(f"[App] WARNING: Camera failed to start: {_cam_err}")
+    print("[App]   Backend will still run. Check camera connection.")
+
+try:
+    display.start()
+    print("[App] Display started OK")
+except Exception as _disp_err:
+    print(f"[App] WARNING: Display failed to start: {_disp_err}")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
@@ -42,10 +54,13 @@ def static_proxy(path):
 
 def _generate_frames():
     while True:
-        jpg = camera.get_frame_jpg()
-        if jpg:
-            yield (b"--frame\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
+        try:
+            jpg = camera.get_frame_jpg()
+            if jpg:
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
+        except Exception:
+            pass
         time.sleep(0.04)
 
 
@@ -59,17 +74,19 @@ def video_feed():
 
 @app.route("/stats")
 def stats():
-    s = session.get_stats()
-    d = camera.get_detections()
-    s.update(d)
-    return jsonify(s)
+    try:
+        s = session.get_stats()
+        d = camera.get_detections()
+        s.update(d)
+        return jsonify(s)
+    except Exception as e:
+        return jsonify({"error": str(e), "face": False, "phone": False, "brightness": 0})
 
 
 @app.route("/graph_data")
 def graph_data():
     days = int(request.args.get("days", 7))
     docs = database.load_sessions_range(days)
-
     today = datetime.now().date()
 
     if not docs:
@@ -77,16 +94,20 @@ def graph_data():
         for i in range(days):
             d = today - timedelta(days=(days - 1 - i))
             demo.append({
-                "date":    d.strftime("%Y-%m-%d"),
-                "study":   round(random.uniform(1.5, 6.0), 2),
-                "sleep":   round(random.uniform(0.0, 1.5), 2),
-                "inactive":round(random.uniform(0.2, 2.0), 2),
+                "date":     d.strftime("%Y-%m-%d"),
+                "study":    round(random.uniform(1.5, 6.0), 2),
+                "sleep":    round(random.uniform(0.0, 1.5), 2),
+                "inactive": round(random.uniform(0.2, 2.0), 2),
             })
         return jsonify(demo)
 
     real_by_date = {}
     for d in docs:
         real_by_date[d.get("date", "")] = d
+
+    def _to_hours(val):
+        v = float(val or 0)
+        return round(v / 3600, 2) if v > 24 else round(v, 2)
 
     result = []
     for i in range(days):
@@ -95,16 +116,20 @@ def graph_data():
         if date_str in real_by_date:
             doc = real_by_date[date_str]
             result.append({
-                "date":    date_str,
-                "study":   round(doc.get("study",    0) / 3600, 2),
-                "sleep":   round(doc.get("sleep",    0) / 3600, 2),
-                "inactive":round(doc.get("inactive", 0) / 3600, 2),
+                "date":     date_str,
+                "study":    _to_hours(doc.get("study", 0)),
+                "sleep":    _to_hours(doc.get("sleep", 0)),
+                "inactive": _to_hours(doc.get("inactive", doc.get("away", 0))),
             })
         else:
-            result.append({
-                "date": date_str, "study": 0, "sleep": 0, "inactive": 0
-            })
+            result.append({"date": date_str, "study": 0, "sleep": 0, "inactive": 0})
     return jsonify(result)
+
+
+# Alias so both /graph_data and /api/graph work
+@app.route("/api/graph")
+def api_graph():
+    return graph_data()
 
 
 @app.route("/ask_ai", methods=["POST"])
@@ -129,29 +154,18 @@ def ask_ai():
             "If the user has uploaded source material, use it to answer."
         )
         if context:
-            system_prompt += (
-                f"\n\n--- UPLOADED SOURCES ---\n{context[:12000]}\n--- END SOURCES ---"
-            )
+            system_prompt += f"\n\n--- UPLOADED SOURCES ---\n{context[:12000]}\n--- END SOURCES ---"
 
-        model_names = [
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-flash-latest",
-        ]
-
+        model_names = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-flash-latest"]
         model    = None
         last_err = None
         for model_name in model_names:
             try:
-                model = genai.GenerativeModel(
-                    model_name=model_name,
-                    system_instruction=system_prompt
-                )
+                model = genai.GenerativeModel(model_name=model_name, system_instruction=system_prompt)
                 print(f"[AI] Using model: {model_name}")
                 break
             except Exception as e:
                 last_err = e
-                print(f"[AI] Model {model_name} failed: {e}")
                 continue
 
         if model is None:
@@ -160,10 +174,7 @@ def ask_ai():
         gemini_history = []
         for h in history[-10:]:
             role = "user" if h["role"] == "user" else "model"
-            gemini_history.append({
-                "role":  role,
-                "parts": [{"text": h["content"]}]
-            })
+            gemini_history.append({"role": role, "parts": [{"text": h["content"]}]})
 
         chat     = model.start_chat(history=gemini_history)
         response = chat.send_message(question)
@@ -203,26 +214,20 @@ def extract_pdf():
 def att_data():
     return jsonify(att_module.get_all())
 
-
 @app.route("/att/add", methods=["POST"])
 def att_add():
     data = request.get_json()
     return jsonify(att_module.add_subject(data.get("name", "")))
-
 
 @app.route("/att/remove", methods=["POST"])
 def att_remove():
     data = request.get_json()
     return jsonify(att_module.remove_subject(data.get("name", "")))
 
-
 @app.route("/att/toggle", methods=["POST"])
 def att_toggle():
     data = request.get_json()
-    return jsonify(att_module.toggle_day(
-        data.get("name", ""), data.get("date", "")
-    ))
-
+    return jsonify(att_module.toggle_day(data.get("name", ""), data.get("date", "")))
 
 @app.route("/att/stats/<name>")
 def att_stats(name):
@@ -237,13 +242,10 @@ def set_display(state):
     return jsonify({"error": "Invalid state"}), 400
 
 
-# ── Reminders ─────────────────────────────────────────────────────
-
 @app.route("/reminders", methods=["GET"])
 def get_reminders():
     from db import load_reminders
     return jsonify(load_reminders())
-
 
 @app.route("/reminders/add", methods=["POST"])
 def add_reminder():
@@ -263,7 +265,6 @@ def add_reminder():
     save_reminder(reminder)
     return jsonify({"ok": True, "reminder": reminder})
 
-
 @app.route("/reminders/delete", methods=["POST"])
 def delete_reminder_route():
     from db import delete_reminder
@@ -271,16 +272,13 @@ def delete_reminder_route():
     delete_reminder(data.get("id", ""))
     return jsonify({"ok": True})
 
-
 @app.route("/reminders/done", methods=["POST"])
 def mark_reminder_done():
     from db import _load_fallback, _save_fallback
     data = request.get_json()
     rid  = data.get("id", "")
     if database.get_db() is not None:
-        database.get_db().reminders.update_one(
-            {"id": rid}, {"$set": {"done": True}}
-        )
+        database.get_db().reminders.update_one({"id": rid}, {"$set": {"done": True}})
     else:
         fb = _load_fallback()
         for r in fb.get("reminders", []):
@@ -290,10 +288,7 @@ def mark_reminder_done():
     return jsonify({"ok": True})
 
 
-# ── Pomodoro ──────────────────────────────────────────────────────
-
 _pomodoro_work_secs = 25 * 60
-
 
 @app.route("/set_pomodoro", methods=["POST"])
 def set_pomodoro():
@@ -305,11 +300,8 @@ def set_pomodoro():
     return jsonify({"ok": True})
 
 
-# ── Sleep reminder ────────────────────────────────────────────────
-
 _wake_time  = None
 _sleep_mode = False
-
 
 @app.route("/sleep/set_wake", methods=["POST"])
 def set_wake_time():
@@ -319,11 +311,9 @@ def set_wake_time():
     print(f"[Sleep] Wake time set to {_wake_time}")
     return jsonify({"ok": True})
 
-
 @app.route("/sleep/wake_time", methods=["GET"])
 def get_wake_time():
     return jsonify({"wake_time": _wake_time or ""})
-
 
 @app.route("/sleep/check", methods=["GET"])
 def check_sleep_reminder():
@@ -337,14 +327,9 @@ def check_sleep_reminder():
             wake = wake + timedelta(days=1)
         diff_hours    = (wake - now).total_seconds() / 3600
         should_remind = 6.0 <= diff_hours <= 8.0
-        return jsonify({
-            "remind":     should_remind,
-            "hours_left": round(diff_hours, 1),
-            "wake_time":  _wake_time
-        })
+        return jsonify({"remind": should_remind, "hours_left": round(diff_hours, 1), "wake_time": _wake_time})
     except Exception as e:
         return jsonify({"remind": False, "error": str(e)})
-
 
 @app.route("/sleep/start", methods=["POST"])
 def start_sleep_mode():
@@ -353,7 +338,6 @@ def start_sleep_mode():
     session.set_sleep_mode(True)
     return jsonify({"ok": True})
 
-
 @app.route("/sleep/stop", methods=["POST"])
 def stop_sleep_mode():
     global _sleep_mode
@@ -361,8 +345,6 @@ def stop_sleep_mode():
     session.set_sleep_mode(False)
     return jsonify({"ok": True})
 
-
-# ── Run ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
