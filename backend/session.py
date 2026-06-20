@@ -37,8 +37,8 @@ PHONE_FRAMES_NEEDED = 8
 _sleep_mode = False
 
 _gpio       = None
-_buzzer_pin = 17
-_led_pin    = 27
+_buzzer_pin = 18   # GPIO 18 — matches wiring diagram
+_led_pin    = 22   # GPIO 22 (Green LED) — matches wiring diagram
 
 
 def _init_gpio():
@@ -102,7 +102,7 @@ def tick(face_present: bool, phone_present: bool, brightness: float):
     elapsed = now - _last_tick
     _last_tick = now
 
-    # Day rollover — reset study and inactive but NOT sleep (cumulative)
+    # Day rollover
     today = datetime.now().strftime("%Y-%m-%d")
     if today != _today:
         _today = today
@@ -112,7 +112,7 @@ def tick(face_present: bool, phone_present: bool, brightness: float):
 
     with _lock:
 
-        # ── Manual sleep mode — overrides everything ──────────────
+        # ── Manual sleep mode ─────────────────────────────────────
         if _sleep_mode:
             _status = "SLEEPING"
             _sleep_secs += elapsed
@@ -154,13 +154,8 @@ def tick(face_present: bool, phone_present: bool, brightness: float):
         else:
             if _face_lost_since is None:
                 _face_lost_since = now
-            grace_elapsed = now - _face_lost_since
-            if grace_elapsed < FACE_GRACE:
-                _status = "INACTIVE"
-                _inactive_secs += elapsed
-            else:
-                _status = "INACTIVE"
-                _inactive_secs += elapsed
+            _status = "INACTIVE"
+            _inactive_secs += elapsed
 
         # ── Pomodoro ──────────────────────────────────────────────
         if _pomodoro_bank >= _pomodoro_duration:
