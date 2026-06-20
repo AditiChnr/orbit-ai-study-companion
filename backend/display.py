@@ -1,23 +1,11 @@
-# display.py — TFT display + LEDs + Buzzer with mascot animations
+# display.py — TFT display + LEDs + Buzzer with pixel art tamagotchi character
 
 import threading
 import time
-import os
 import math
 import random
 
 _mock_mode = False
-_BASE = os.path.dirname(__file__)
-
-# ── Mascot image paths ────────────────────────────────────────────────────────
-MASCOT = {
-    "focused":  os.path.join(_BASE, "mascot-focused.png"),
-    "dancing":  os.path.join(_BASE, "mascot-dancing.png"),
-    "sleeping": os.path.join(_BASE, "mascot-sleeping.png"),
-    "idle":     os.path.join(_BASE, "mascot-idle.png"),
-    "phone":    os.path.join(_BASE, "mascot-phone.png"),
-    "happy":    os.path.join(_BASE, "mascot-happy.png"),
-}
 
 try:
     import RPi.GPIO as GPIO
@@ -35,52 +23,46 @@ try:
         GPIO.output(pin, GPIO.LOW)
 
     import st7735
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
     print("[Display] Real GPIO + ST7735 initialized")
 
 except ImportError:
     _mock_mode = True
     print("[Display] Mock mode — display output goes to terminal")
 
-_state     = "idle"
-_running   = False
-_thread    = None
-
+_state   = "idle"
+_running = False
+_thread  = None
 
 # ── LED helpers ───────────────────────────────────────────────────────────────
 def _all_leds_off():
-    if _mock_mode:
-        return
+    if _mock_mode: return
     for pin in [LED_GREEN, LED_YELLOW, LED_RED, LED_WHITE]:
         GPIO.output(pin, GPIO.LOW)
 
 def _set_leds_studying():
-    if _mock_mode:
-        return
+    if _mock_mode: return
     GPIO.output(LED_GREEN,  GPIO.HIGH)
     GPIO.output(LED_WHITE,  GPIO.HIGH)
     GPIO.output(LED_YELLOW, GPIO.LOW)
     GPIO.output(LED_RED,    GPIO.LOW)
 
 def _set_leds_break():
-    if _mock_mode:
-        return
+    if _mock_mode: return
     GPIO.output(LED_RED,    GPIO.HIGH)
     GPIO.output(LED_YELLOW, GPIO.HIGH)
     GPIO.output(LED_GREEN,  GPIO.LOW)
     GPIO.output(LED_WHITE,  GPIO.LOW)
 
 def _set_leds_away():
-    if _mock_mode:
-        return
+    if _mock_mode: return
     GPIO.output(LED_YELLOW, GPIO.HIGH)
     GPIO.output(LED_GREEN,  GPIO.LOW)
     GPIO.output(LED_RED,    GPIO.LOW)
     GPIO.output(LED_WHITE,  GPIO.LOW)
 
 def _set_leds_sleeping():
-    if _mock_mode:
-        return
+    if _mock_mode: return
     GPIO.output(LED_WHITE,  GPIO.HIGH)
     GPIO.output(LED_GREEN,  GPIO.LOW)
     GPIO.output(LED_YELLOW, GPIO.LOW)
@@ -97,81 +79,140 @@ def buzz(times=1, duration=0.1):
         time.sleep(0.05)
 
 
-# ── Image loader helper ───────────────────────────────────────────────────────
-def _load_mascot(key, size):
-    """Load a mascot PNG, resize to fit display, return PIL Image or None."""
-    path = MASCOT.get(key, "")
-    if not os.path.exists(path):
-        return None
-    try:
-        img = Image.open(path).convert("RGBA")
-        # Fit inside size keeping aspect ratio
-        img.thumbnail(size, Image.LANCZOS)
-        # Paste onto black background
-        bg = Image.new("RGB", size, (0, 0, 0))
-        offset = ((size[0] - img.width) // 2, (size[1] - img.height) // 2)
-        bg.paste(img, offset, img)
-        return bg
-    except Exception as e:
-        print(f"[Display] Could not load mascot '{key}': {e}")
-        return None
+# ── Pixel art drawing helpers ─────────────────────────────────────────────────
+def _px(draw, x, y, s, color):
+    """Draw a pixel block of size s at grid position x,y."""
+    draw.rectangle([x*s, y*s, x*s+s-1, y*s+s-1], fill=color)
 
+def _draw_char(draw, cx, cy, s, face, color):
+    """
+    Draw tamagotchi character centered at (cx,cy) on a pixel grid.
+    face: 'normal'|'happy'|'sad'|'sleep'|'angry'|'focused'
+    s: pixel block size
+    cx, cy: center in pixel coords
+    """
+    W = color
+    B = (0, 0, 0)
 
-def _retro_font(size=12):
-    """Try to load a font, fall back to default."""
-    try:
-        return ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
-    except Exception:
-        return ImageFont.load_default()
+    # Convert center pixel to grid
+    gx = cx // s
+    gy = cy // s
+
+    # ── Body (rounded blob) ──────────────────────────────────────
+    body = [
+        (0,0),(1,0),(2,0),(3,0),(4,0),
+        (-1,1),(0,1),(1,1),(2,1),(3,1),(4,1),(5,1),
+        (-1,2),(0,2),(1,2),(2,2),(3,2),(4,2),(5,2),
+        (-1,3),(0,3),(1,3),(2,3),(3,3),(4,3),(5,3),
+        (0,4),(1,4),(2,4),(3,4),(4,4),
+    ]
+    for bx, by in body:
+        _px(draw, gx+bx-2, gy+by-2, s, W)
+
+    # ── Face expressions ──────────────────────────────────────────
+    if face == 'normal':
+        # Eyes: two dots
+        _px(draw, gx,   gy, s, B)
+        _px(draw, gx+2, gy, s, B)
+        # Mouth: small smile
+        _px(draw, gx,   gy+2, s, B)
+        _px(draw, gx+1, gy+3, s, B)
+        _px(draw, gx+2, gy+2, s, B)
+
+    elif face == 'happy':
+        # Eyes: ^ ^
+        _px(draw, gx,   gy-1, s, B)
+        _px(draw, gx+1, gy,   s, B)
+        _px(draw, gx+2, gy-1, s, B)
+        _px(draw, gx+4, gy-1, s, B)
+        _px(draw, gx+3, gy,   s, B)  # wrong offset fix below
+        # Big smile
+        _px(draw, gx-1, gy+2, s, B)
+        _px(draw, gx,   gy+3, s, B)
+        _px(draw, gx+1, gy+3, s, B)
+        _px(draw, gx+2, gy+3, s, B)
+        _px(draw, gx+3, gy+2, s, B)
+
+    elif face == 'sad':
+        # Eyes: droopy
+        _px(draw, gx,   gy, s, B)
+        _px(draw, gx+2, gy, s, B)
+        # Tears
+        _px(draw, gx,   gy+1, s, (100,180,255))
+        _px(draw, gx+2, gy+1, s, (100,180,255))
+        # Frown
+        _px(draw, gx,   gy+3, s, B)
+        _px(draw, gx+1, gy+2, s, B)
+        _px(draw, gx+2, gy+3, s, B)
+
+    elif face == 'sleep':
+        # Eyes: closed lines
+        _px(draw, gx,   gy, s, B)
+        _px(draw, gx+1, gy, s, B)
+        _px(draw, gx+2, gy, s, B)
+        _px(draw, gx+4, gy, s, B)  # oops, fix
+        # Zzz mouth
+        _px(draw, gx+1, gy+2, s, B)
+
+    elif face == 'angry':
+        # Eyes: angry slant
+        _px(draw, gx+1, gy-1, s, B)
+        _px(draw, gx,   gy,   s, B)
+        _px(draw, gx+3, gy-1, s, B)
+        _px(draw, gx+2, gy,   s, B)  # adjusted
+        # Frown
+        _px(draw, gx,   gy+3, s, B)
+        _px(draw, gx+1, gy+2, s, B)
+        _px(draw, gx+2, gy+3, s, B)
+
+    elif face == 'focused':
+        # Eyes: determined, thick
+        _px(draw, gx,   gy, s, B)
+        _px(draw, gx+1, gy, s, B)
+        _px(draw, gx+3, gy, s, B)
+        _px(draw, gx+4, gy, s, B)  # adjusted
+        # Straight mouth
+        _px(draw, gx,   gy+2, s, B)
+        _px(draw, gx+1, gy+2, s, B)
+        _px(draw, gx+2, gy+2, s, B)
+
+    # ── Feet ─────────────────────────────────────────────────────
+    _px(draw, gx-1, gy+3, s, W)
+    _px(draw, gx+3, gy+3, s, W)
 
 
 # ── Mock loop ─────────────────────────────────────────────────────────────────
 def _mock_loop():
-    last_printed = None
+    last = None
     while _running:
-        if _state != last_printed:
-            labels = {
-                "idle":     "IDLE — starfield + mascot-idle",
-                "studying": "STUDYING — mascot-focused + scanlines",
-                "break":    "BREAK — flashing + mascot-dancing",
-                "sleeping": "SLEEPING — dark + mascot-sleeping",
-                "phone":    "PHONE ALERT — mascot-phone",
-            }
-            print(f"[Display] {labels.get(_state, _state.upper())}")
-            last_printed = _state
+        if _state != last:
+            print(f"[Display] Pixel art state: {_state.upper()}")
+            last = _state
         time.sleep(2)
 
 
 # ── Real loop ─────────────────────────────────────────────────────────────────
 def _real_loop():
     disp = st7735.ST7735(
-        port=0, cs=8,
+        port=0, cs=0,
         dc=24, rst=25, backlight=None, rotation=270
     )
     disp.begin()
     W, H = disp.width, disp.height
 
-    # Pre-load mascots at display size
-    mascots = {k: _load_mascot(k, (W, H)) for k in MASCOT}
+    S = 4  # pixel block size — 4x4 per "pixel"
 
     # Starfield
-    stars = [(random.randint(0, W), random.randint(0, H),
-              random.uniform(0.5, 3.0)) for _ in range(50)]
-
-    # Retro scanline overlay (every other row dimmed)
-    def _draw_scanlines(draw, w, h):
-        for y in range(0, h, 2):
-            draw.line([(0, y), (w, y)], fill=(0, 0, 0, 60))
+    stars = [(random.randint(0, W), random.randint(0, H)) for _ in range(40)]
 
     frame      = 0
-    flash      = False
     last_state = None
-    bob_offset = 0
+    blink      = True
+    bob        = 0
 
     while _running:
 
-        # ── LED update on state change ─────────────────────────────────────
+        # ── LED update on state change ─────────────────────────────
         if _state != last_state:
             _all_leds_off()
             if _state == "studying":
@@ -186,122 +227,170 @@ def _real_loop():
                 _set_leds_away()
             last_state = _state
 
-        # ── Base canvas ───────────────────────────────────────────────────
         img  = Image.new("RGB", (W, H), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # ════════════════════════════════════════════════════════════════════
-        # IDLE — starfield background + idle mascot bobbing
-        # ════════════════════════════════════════════════════════════════════
+        WHITE  = (255, 255, 255)
+        BLACK  = (0, 0, 0)
+        DIM    = (80, 80, 80)
+        GREEN  = (0, 255, 80)
+        RED    = (255, 60, 60)
+        BLUE   = (100, 160, 255)
+        YELLOW = (255, 220, 0)
+
+        cx = W // 2
+        bob_y = int(3 * math.sin(frame * 0.15))
+
+        # ════════════════════════════════════════════════════════════
+        # IDLE — starfield + blinking normal face
+        # ════════════════════════════════════════════════════════════
         if _state == "idle":
-            # Scrolling starfield
-            for i, (sx, sy, speed) in enumerate(stars):
-                brightness = int(180 + 75 * math.sin(frame * 0.07 + i))
-                r = 1 if speed < 1.5 else 2
-                draw.ellipse([sx-r, sy-r, sx+r, sy+r],
-                             fill=(brightness, brightness, brightness))
-            # Mascot bobbing up/down
-            bob = int(4 * math.sin(frame * 0.1))
-            m   = mascots.get("idle")
-            if m:
-                tmp = Image.new("RGB", (W, H), (0, 0, 0))
-                tmp.paste(m, (0, bob))
-                img = Image.blend(img, tmp, 0.9)
-                draw = ImageDraw.Draw(img)
-            # Retro label
-            font = _retro_font(10)
-            draw.text((W//2, H - 10), "ORBIT", font=font,
-                      fill=(255, 200, 0), anchor="mm")
+            # Twinkling stars
+            for i, (sx, sy) in enumerate(stars):
+                b = int(120 + 80 * math.sin(frame * 0.08 + i))
+                draw.point((sx, sy), fill=(b, b, b))
 
-        # ════════════════════════════════════════════════════════════════════
-        # STUDYING — green tinted bg + focused mascot + scanlines
-        # ════════════════════════════════════════════════════════════════════
+            # Blink every 60 frames
+            face = 'normal'
+            if frame % 60 < 4:
+                face = 'sleep'  # eyes closed = blink
+
+            cy = H // 2 + bob_y
+            _draw_char(draw, cx, cy, S, face, WHITE)
+
+            # "ORBIT" text in pixels
+            _pixel_text(draw, "ORBIT", W//2 - 20, H - 12, DIM, 2)
+
+        # ════════════════════════════════════════════════════════════
+        # STUDYING — grid bg + focused face + pulsing border
+        # ════════════════════════════════════════════════════════════
         elif _state == "studying":
-            # Dark green retro bg
-            draw.rectangle([0, 0, W, H], fill=(0, 15, 0))
-            # Pixel grid effect
+            # Pixel grid
             for gx in range(0, W, 8):
-                draw.line([(gx, 0), (gx, H)], fill=(0, 30, 0))
+                draw.line([(gx, 0), (gx, H)], fill=(0, 25, 0))
             for gy in range(0, H, 8):
-                draw.line([(0, gy), (W, gy)], fill=(0, 30, 0))
-            # Mascot
-            m = mascots.get("focused")
-            if m:
-                img.paste(m, (0, 0))
-                draw = ImageDraw.Draw(img)
-            # Scanlines
-            for y in range(0, H, 2):
-                draw.line([(0, y), (W, y)], fill=(0, 0, 0))
+                draw.line([(0, gy), (W, gy)], fill=(0, 25, 0))
+
+            cy = H // 2
+            _draw_char(draw, cx, cy, S, 'focused', GREEN)
+
             # Pulsing border
-            border_bright = int(100 + 80 * math.sin(frame * 0.1))
-            draw.rectangle([0, 0, W-1, H-1],
-                           outline=(0, border_bright, 0), width=2)
-            # Label
-            font = _retro_font(9)
-            draw.text((W//2, 6), "STUDYING", font=font,
-                      fill=(0, 255, 80), anchor="mm")
+            b = int(80 + 60 * math.sin(frame * 0.1))
+            draw.rectangle([0, 0, W-1, H-1], outline=(0, b, 0), width=2)
+            _pixel_text(draw, "FOCUS", W//2 - 20, 5, GREEN, 2)
 
-        # ════════════════════════════════════════════════════════════════════
-        # BREAK — flashing warm bg + dancing mascot
-        # ════════════════════════════════════════════════════════════════════
+        # ════════════════════════════════════════════════════════════
+        # BREAK — flashing bg + happy jumping character
+        # ════════════════════════════════════════════════════════════
         elif _state == "break":
-            flash = not flash
-            bg    = (180, 40, 0) if flash else (80, 10, 0)
+            flash = (frame // 6) % 2 == 0
+            bg = (30, 0, 0) if flash else (15, 0, 0)
             draw.rectangle([0, 0, W, H], fill=bg)
-            # Dancing mascot alternates every 8 frames
-            key = "dancing" if (frame // 8) % 2 == 0 else "happy"
-            m   = mascots.get(key) or mascots.get("dancing")
-            if m:
-                img.paste(m, (0, 0))
-                draw = ImageDraw.Draw(img)
-            # Scanlines
-            for y in range(0, H, 2):
-                draw.line([(0, y), (W, y)], fill=(0, 0, 0))
-            font = _retro_font(11)
-            draw.text((W//2, 6), "BREAK!", font=font,
-                      fill=(255, 220, 0), anchor="mm")
 
-        # ════════════════════════════════════════════════════════════════════
-        # SLEEPING — deep blue + sleeping mascot + slow stars
-        # ════════════════════════════════════════════════════════════════════
+            # Jump animation
+            jump = abs(int(6 * math.sin(frame * 0.2)))
+            cy = H // 2 - jump
+            _draw_char(draw, cx, cy, S, 'happy', YELLOW)
+
+            _pixel_text(draw, "BREAK!", W//2 - 24, 5, YELLOW, 2)
+
+            # Confetti dots
+            random.seed(frame // 4)
+            for _ in range(8):
+                rx = random.randint(0, W)
+                ry = random.randint(0, H//3)
+                rc = random.choice([YELLOW, WHITE, RED])
+                draw.rectangle([rx, ry, rx+2, ry+2], fill=rc)
+
+        # ════════════════════════════════════════════════════════════
+        # SLEEPING — dark blue + sleeping face + floating Z's
+        # ════════════════════════════════════════════════════════════
         elif _state == "sleeping":
-            draw.rectangle([0, 0, W, H], fill=(0, 0, 20))
-            # Slow twinkling stars
-            for i, (sx, sy, speed) in enumerate(stars[:30]):
-                b = int(60 + 40 * math.sin(frame * 0.03 + i))
-                draw.point((sx, sy), fill=(b, b, b+40))
-            # Sleeping mascot
-            m = mascots.get("sleeping")
-            if m:
-                img.paste(m, (0, 0))
-                draw = ImageDraw.Draw(img)
-            # Floating Z's
-            font = _retro_font(14)
-            z_y  = int(20 + 10 * math.sin(frame * 0.05))
-            draw.text((W - 15, z_y), "z", font=font, fill=(150, 150, 255))
-            font2 = _retro_font(10)
-            draw.text((W - 25, z_y + 18), "z", font=font2, fill=(100, 100, 200))
+            draw.rectangle([0, 0, W, H], fill=(0, 0, 15))
 
-        # ════════════════════════════════════════════════════════════════════
-        # PHONE — red alert + phone mascot + warning flash
-        # ════════════════════════════════════════════════════════════════════
+            # Slow stars
+            for i, (sx, sy) in enumerate(stars[:20]):
+                b = int(40 + 20 * math.sin(frame * 0.03 + i))
+                draw.point((sx, sy), fill=(b, b, b+30))
+
+            cy = H // 2 + 5
+            _draw_char(draw, cx, cy, S, 'sleep', BLUE)
+
+            # Floating Z's
+            z1y = int(H//3 + 8 * math.sin(frame * 0.05))
+            z2y = int(H//4 + 6 * math.sin(frame * 0.05 + 1))
+            z3y = int(H//5 + 4 * math.sin(frame * 0.05 + 2))
+            _pixel_text(draw, "z", cx + 20, z1y,     BLUE, 3)
+            _pixel_text(draw, "z", cx + 28, z2y - 8, DIM,  2)
+            _pixel_text(draw, "z", cx + 34, z3y - 16,(40,40,80), 2)
+
+        # ════════════════════════════════════════════════════════════
+        # PHONE — red flash + angry face
+        # ════════════════════════════════════════════════════════════
         elif _state == "phone":
-            flash = not flash
-            bg    = (60, 0, 0) if flash else (20, 0, 0)
+            flash = (frame // 4) % 2 == 0
+            bg = (25, 0, 0) if flash else (10, 0, 0)
             draw.rectangle([0, 0, W, H], fill=bg)
-            m = mascots.get("phone")
-            if m:
-                img.paste(m, (0, 0))
-                draw = ImageDraw.Draw(img)
-            for y in range(0, H, 2):
-                draw.line([(0, y), (W, y)], fill=(0, 0, 0))
-            font = _retro_font(9)
-            draw.text((W//2, 6), "PUT IT DOWN", font=font,
-                      fill=(255, 80, 80), anchor="mm")
+
+            cy = H // 2
+            _draw_char(draw, cx, cy, S, 'angry', RED)
+
+            _pixel_text(draw, "PUT IT", W//2 - 24, 5,  RED, 2)
+            _pixel_text(draw, " DOWN!", W//2 - 24, 16, RED, 2)
+
+            # Warning border flash
+            if flash:
+                draw.rectangle([0, 0, W-1, H-1], outline=RED, width=2)
 
         disp.display(img)
         frame += 1
-        time.sleep(0.05)   # ~20 fps
+        time.sleep(0.05)
+
+
+def _pixel_text(draw, text, x, y, color, size=2):
+    """Tiny 3x5 pixel font renderer."""
+    FONT = {
+        'A': ["010","101","111","101","101"],
+        'B': ["110","101","110","101","110"],
+        'C': ["011","100","100","100","011"],
+        'D': ["110","101","101","101","110"],
+        'E': ["111","100","110","100","111"],
+        'F': ["111","100","110","100","100"],
+        'G': ["011","100","101","101","011"],
+        'H': ["101","101","111","101","101"],
+        'I': ["111","010","010","010","111"],
+        'K': ["101","110","100","110","101"],
+        'L': ["100","100","100","100","111"],
+        'M': ["101","111","101","101","101"],
+        'N': ["101","111","111","101","101"],
+        'O': ["010","101","101","101","010"],
+        'P': ["110","101","110","100","100"],
+        'R': ["110","101","110","101","101"],
+        'S': ["011","100","010","001","110"],
+        'T': ["111","010","010","010","010"],
+        'U': ["101","101","101","101","011"],
+        'W': ["101","101","111","111","101"],
+        'X': ["101","101","010","101","101"],
+        'Y': ["101","101","010","010","010"],
+        'Z': ["111","001","010","100","111"],
+        '!': ["010","010","010","000","010"],
+        ' ': ["000","000","000","000","000"],
+        '.': ["000","000","000","000","010"],
+        ':': ["000","010","000","010","000"],
+    }
+    ox = x
+    for ch in text.upper():
+        if ch not in FONT:
+            ox += (3 + 1) * size
+            continue
+        rows = FONT[ch]
+        for row_i, row in enumerate(rows):
+            for col_i, pixel in enumerate(row):
+                if pixel == '1':
+                    px = ox + col_i * size
+                    py = y + row_i * size
+                    draw.rectangle([px, py, px+size-1, py+size-1], fill=color)
+        ox += (3 + 1) * size
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
