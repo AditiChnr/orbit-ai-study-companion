@@ -37,8 +37,11 @@ PHONE_FRAMES_NEEDED = 8
 _sleep_mode = False
 
 _gpio       = None
-_buzzer_pin = 18   # GPIO 18 — matches wiring diagram
-_led_pin    = 22   # GPIO 22 (Green LED) — matches wiring diagram
+_buzzer_pin = 18
+_led_pin    = 22
+
+# Display state tracking
+_last_display_state = None
 
 
 def _init_gpio():
@@ -90,6 +93,17 @@ def set_sleep_mode(enabled: bool):
     print(f"[Session] Sleep mode {'ON' if enabled else 'OFF'}")
 
 
+def _update_display(new_state: str):
+    global _last_display_state
+    if new_state != _last_display_state:
+        try:
+            import display
+            display.set_state(new_state)
+            _last_display_state = new_state
+        except Exception as e:
+            print(f"[Session] Display update error: {e}")
+
+
 def tick(face_present: bool, phone_present: bool, brightness: float):
     global _study_secs, _sleep_secs, _inactive_secs
     global _status, _last_tick, _today
@@ -102,7 +116,6 @@ def tick(face_present: bool, phone_present: bool, brightness: float):
     elapsed = now - _last_tick
     _last_tick = now
 
-    # Day rollover
     today = datetime.now().strftime("%Y-%m-%d")
     if today != _today:
         _today = today
@@ -112,20 +125,18 @@ def tick(face_present: bool, phone_present: bool, brightness: float):
 
     with _lock:
 
-        # ── Manual sleep mode ─────────────────────────────────────
         if _sleep_mode:
             _status = "SLEEPING"
             _sleep_secs += elapsed
+            _update_display("sleeping")
             return
 
-        # ── Phone stability ───────────────────────────────────────
         if phone_present:
             _phone_consecutive += 1
         else:
             _phone_consecutive = 0
         stable_phone = _phone_consecutive >= PHONE_FRAMES_NEEDED
 
-        # ── Sleep detection (auto brightness) ─────────────────────
         if brightness < DARK_THRESHOLD:
             if _dark_since is None:
                 _dark_since = now
@@ -134,36 +145,38 @@ def tick(face_present: bool, phone_present: bool, brightness: float):
             _dark_since   = None
             dark_duration = 0
 
-        # ── Status determination ──────────────────────────────────
         if dark_duration >= DARK_DURATION:
             _status = "SLEEPING"
             _sleep_secs += elapsed
             _face_lost_since = None
+            _update_display("sleeping")
+
+        elif face_present and stable_phone:
+            _status = "INACTIVE"
+            _inactive_secs  += elapsed
+            _face_lost_since = None
+            _update_display("phone")
 
         elif face_present and not stable_phone:
             _status = "STUDYING"
             _study_secs    += elapsed
             _pomodoro_bank += elapsed
             _face_lost_since = None
-
-        elif face_present and stable_phone:
-            _status = "INACTIVE"
-            _inactive_secs  += elapsed
-            _face_lost_since = None
+            _update_display("studying")
 
         else:
             if _face_lost_since is None:
                 _face_lost_since = now
             _status = "INACTIVE"
             _inactive_secs += elapsed
+            _update_display("idle")
 
-        # ── Pomodoro ──────────────────────────────────────────────
         if _pomodoro_bank >= _pomodoro_duration:
             _pomodoro_alert = True
             _pomodoro_bank  = 0.0
             _buzz(0.3)
+            _update_display("break")
 
-        # ── Phone alert ───────────────────────────────────────────
         if stable_phone:
             if _phone_start is None:
                 _phone_start = now
