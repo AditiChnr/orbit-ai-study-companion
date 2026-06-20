@@ -122,6 +122,7 @@ def _capture_loop():
                     continue
 
                 fail_count = 0
+                frame      = cv2.flip(frame, -1)  # -1 = flip both axes
                 processed  = _process_frame(frame)
                 _, jpg = cv2.imencode(
                     ".jpg", processed,
