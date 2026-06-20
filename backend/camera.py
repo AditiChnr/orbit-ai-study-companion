@@ -13,7 +13,7 @@ try:
     _use_pi_camera = True
     print("[Camera] Using Picamera2 (Pi)")
 except ImportError:
-    print("[Camera] Using OpenCV webcam (laptop/Windows)")
+    print("[Camera] Using OpenCV webcam (USB/laptop)")
 
 # YOLOv8 — optional, backend runs fine without it
 _yolo        = None
@@ -33,8 +33,8 @@ def _load_yolo():
 
 _load_yolo()
 
-_cascade_path = (cv2.data.haarcascades 
-    if hasattr(cv2, "data") 
+_cascade_path = (cv2.data.haarcascades
+    if hasattr(cv2, "data")
     else "/usr/share/opencv4/haarcascades/")
 _face_cascade = cv2.CascadeClassifier(
     _cascade_path + "haarcascade_frontalface_default.xml"
@@ -93,12 +93,12 @@ def _capture_loop():
         _capture_pi()
         return
 
-    # Windows webcam with auto-retry
+    # USB webcam with auto-retry (Linux/Pi compatible)
     while True:
         cap = None
         try:
             print("[Camera] Attempting to open webcam (index 0)...")
-            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)   # CAP_DSHOW = faster on Windows
+            cap = cv2.VideoCapture(0)  # No CAP_DSHOW — Linux/Pi compatible
             if not cap.isOpened():
                 raise RuntimeError("VideoCapture(0) could not be opened")
 
